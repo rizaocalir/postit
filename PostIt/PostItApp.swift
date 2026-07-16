@@ -10,7 +10,7 @@
 //  ÖZELLİKLER:
 //  ✓ Gerçek zengin metin: seçili yazıyı Bold yapma (toolbar "B" veya ⌘B)
 //  ✓ Bullet (•) ve otomatik artan numaralandırma (1. 2. 3.)
-//  ✓ Alarm: tarih/saat seç → sistem bildirimi gelir
+//  ✓ Alarm: tarih/saat seç → "Kapat" denene kadar ekranda kalan hatırlatma paneli
 //  ✓ Not sonuna çizgi (———) çekilince üstteki metnin İngilizce çevirisi altta belirir
 //  ✓ Toplu görünümde notları sürükleyip yer değiştirme
 //  ✓ Not rengi değiştirme (editörde ve sağ tık menüsünde)
@@ -70,29 +70,88 @@ let postItColors: [(name: String, hex: String)] = [
 // MARK: - 2. Not Yöneticisi
 
 final class NoteManager: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
-    @Published var notes: [StickyNote] = [] { didSet { save() } }
+    @Published var notes: [StickyNote] = [] { didSet { scheduleSave() } }
     @Published var noteToEdit: StickyNote? = nil   // menü çubuğundan seçilen not
     @Published var notificationsDenied = false     // bildirim izni reddedildi mi
 
-    private let storageKey = "SavedStickyNotes.v2"
+    private let legacyStorageKey = "SavedStickyNotes.v2"
+    private var saveTask: Task<Void, Never>?
+
+    /// Notların kaydedildiği dosya: Application Support/PostIt/notes.json
+    private let fileURL: URL = {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("PostIt", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("notes.json")
+    }()
 
     override init() {
         super.init()
         load()
-        let center = UNUserNotificationCenter.current()
-        center.delegate = self
-        center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
-            DispatchQueue.main.async { self.notificationsDenied = !granted }
+        UNUserNotificationCenter.current().delegate = self
+
+        // Kayıt debounce'lu olduğu için çıkışta bekleyen değişiklikleri hemen yaz
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.saveTask?.cancel()
+            self?.save()
         }
     }
 
-    /// Uygulama ön plandayken de bildirimin banner + ses olarak görünmesini sağlar.
-    /// (Bu delege olmazsa macOS, uygulama çalışırken alarmı sessizce yutar.)
+    /// Bildirim iznini ilk alarm kurulurken sorar (açılışta değil).
+    func requestNotificationPermissionIfNeeded() {
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { settings in
+            switch settings.authorizationStatus {
+            case .notDetermined:
+                center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+                    DispatchQueue.main.async { self.notificationsDenied = !granted }
+                }
+            case .denied:
+                DispatchQueue.main.async { self.notificationsDenied = true }
+            default:
+                DispatchQueue.main.async { self.notificationsDenied = false }
+            }
+        }
+    }
+
+    /// Alarm, uygulama çalışırken tetiklenirse banner yerine "Kapat" denene
+    /// kadar ekranda kalan yüzen bir panel gösterilir; ses yine sistemden çalar.
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 willPresent notification: UNNotification,
                                 withCompletionHandler completionHandler:
                                     @escaping (UNNotificationPresentationOptions) -> Void) {
-        completionHandler([.banner, .sound])
+        let identifier = notification.request.identifier
+        DispatchQueue.main.async {
+            guard let id = UUID(uuidString: identifier),
+                  let note = self.notes.first(where: { $0.id == id }) else { return }
+            AlarmPanelManager.shared.show(note: note) { [weak self] in
+                self?.openNote(note)
+            }
+        }
+        completionHandler([.sound])
+    }
+
+    /// Sistem bildirimine tıklanınca (uygulama arka plandayken) ilgili notu açar.
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        let identifier = response.notification.request.identifier
+        DispatchQueue.main.async {
+            if let id = UUID(uuidString: identifier),
+               let note = self.notes.first(where: { $0.id == id }) {
+                self.openNote(note)
+            }
+        }
+        completionHandler()
+    }
+
+    func openNote(_ note: StickyNote) {
+        noteToEdit = note
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.windows.first { $0.identifier?.rawValue.hasPrefix("main") == true }?
+            .makeKeyAndOrderFront(nil)
     }
 
     @discardableResult
@@ -140,17 +199,111 @@ final class NoteManager: NSObject, ObservableObject, UNUserNotificationCenterDel
 
     // MARK: Kalıcılık
 
+    /// Her tuş vuruşunda diske yazmamak için kayıt 1 sn debounce'lanır.
+    private func scheduleSave() {
+        saveTask?.cancel()
+        saveTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            self?.save()
+        }
+    }
+
     private func save() {
         if let data = try? JSONEncoder().encode(notes) {
-            UserDefaults.standard.set(data, forKey: storageKey)
+            try? data.write(to: fileURL, options: .atomic)
         }
     }
 
     private func load() {
-        if let data = UserDefaults.standard.data(forKey: storageKey),
+        if let data = try? Data(contentsOf: fileURL),
            let decoded = try? JSONDecoder().decode([StickyNote].self, from: data) {
             notes = decoded
+        } else if let data = UserDefaults.standard.data(forKey: legacyStorageKey),
+                  let decoded = try? JSONDecoder().decode([StickyNote].self, from: data) {
+            // Eski sürümün UserDefaults kaydını dosyaya taşı
+            notes = decoded
+            save()
+            UserDefaults.standard.removeObject(forKey: legacyStorageKey)
         }
+    }
+}
+
+// MARK: - 2b. Kalıcı Alarm Paneli
+
+/// Alarm tetiklendiğinde "Kapat" denene kadar ekranda kalan yüzen panel.
+final class AlarmPanelManager {
+    static let shared = AlarmPanelManager()
+    private var panels: [UUID: NSPanel] = [:]
+
+    func show(note: StickyNote, onOpen: @escaping () -> Void) {
+        panels[note.id]?.close()
+
+        let panel = NSPanel(contentRect: .zero,
+                            styleMask: [.titled, .closable, .nonactivatingPanel],
+                            backing: .buffered, defer: false)
+        panel.title = "Post-it Hatırlatması"
+        panel.level = .floating
+        panel.hidesOnDeactivate = false
+        panel.isReleasedWhenClosed = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.contentViewController = NSHostingController(
+            rootView: AlarmPanelView(
+                note: note,
+                onOpen: { [weak self] in self?.close(note.id); onOpen() },
+                onClose: { [weak self] in self?.close(note.id) }
+            )
+        )
+        panel.center()
+        panel.orderFrontRegardless()
+        panels[note.id] = panel
+    }
+
+    private func close(_ id: UUID) {
+        panels[id]?.close()
+        panels[id] = nil
+    }
+}
+
+struct AlarmPanelView: View {
+    let note: StickyNote
+    var onOpen: () -> Void
+    var onClose: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: "alarm.fill")
+                    .font(.system(size: 26))
+                    .foregroundStyle(.red)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Post-it Hatırlatması")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.black.opacity(0.6))
+                    Text(note.displayTitle)
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(.black.opacity(0.85))
+                        .lineLimit(2)
+                }
+            }
+
+            if let alarm = note.alarmDate {
+                Text(alarm.formatted(date: .abbreviated, time: .shortened))
+                    .font(.caption)
+                    .foregroundStyle(.black.opacity(0.5))
+            }
+
+            HStack {
+                Button("Notu Aç") { onOpen() }
+                Spacer()
+                Button("Kapat") { onClose() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.red)
+            }
+        }
+        .padding(18)
+        .frame(width: 320)
+        .background(Color(hex: note.colorHex))
     }
 }
 
@@ -484,6 +637,7 @@ struct EditNoteView: View {
 
             // Alarm
             Button(action: {
+                manager.requestNotificationPermissionIfNeeded()
                 tempAlarmDate = note.alarmDate ?? Date().addingTimeInterval(3600)
                 showAlarmPopover = true
             }) {
@@ -621,7 +775,7 @@ struct NoteCardView: View {
                 .fill(Color(hex: note.colorHex))
                 .shadow(color: .black.opacity(0.25), radius: 5, x: 1, y: 3)
         )
-        .rotationEffect(.degrees(Double(abs(note.id.hashValue % 5)) - 2.0)) // hafif post-it eğimi
+        .rotationEffect(.degrees(Double(note.id.uuid.0 % 5) - 2.0)) // hafif, açılışlar arası sabit post-it eğimi
     }
 }
 

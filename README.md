@@ -7,11 +7,11 @@ macOS için menü çubuğunda yaşayan, çeviri destekli yapışkan not (post-it
 - **Zengin metin düzenleme** — seçili yazıyı kalın yapma (toolbar "B" veya ⌘B)
 - **Listeler** — madde işareti (•) ve otomatik artan numaralandırma (1. 2. 3.); Enter ile liste kendiliğinden devam eder, boş maddede Enter listeyi bitirir
 - **Anında İngilizce çeviri** — notun sonuna çizgi (`———` veya `---`) çekildiğinde üstteki metnin İngilizce çevirisi altta belirir (Apple Translation framework, cihaz üzerinde çalışır)
-- **Alarm** — tarih/saat seç, sistem bildirimi olarak hatırlatma al
+- **Alarm** — tarih/saat seç; alarm çaldığında **"Kapat" diyene kadar ekranda kalan** yüzen bir hatırlatma paneli açılır (uygulama kapalıyken de kalıcı "Alert" stili sistem bildirimi gelir)
 - **Menü çubuğu erişimi** — tüm notlara sağ üstteki menü çubuğu simgesinden hızlıca ulaş
 - **Sürükle-bırak** — pano görünümünde notları sürükleyerek yeniden sırala
 - **6 post-it rengi** — editörden veya sağ tık menüsünden değiştirilebilir
-- **Kalıcı depolama** — notlar otomatik kaydedilir, uygulama kapansa da kaybolmaz
+- **Kalıcı depolama** — notlar Application Support altında JSON dosyasına debounce'lu olarak otomatik kaydedilir; eski sürümün UserDefaults kayıtları ilk açılışta taşınır
 
 ## Gereksinimler
 
