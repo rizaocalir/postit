@@ -221,10 +221,11 @@ final class NoteManager: NSObject, ObservableObject, UNUserNotificationCenterDel
             notes = decoded
         } else if let data = UserDefaults.standard.data(forKey: legacyStorageKey),
                   let decoded = try? JSONDecoder().decode([StickyNote].self, from: data) {
-            // Eski sürümün UserDefaults kaydını dosyaya taşı
+            // Eski sürümün UserDefaults kaydını dosyaya taşı.
+            // Eski kayıt bilerek SİLİNMİYOR: eski bir sürüm çalıştırılırsa
+            // notları hâlâ görebilsin (dosya varken zaten okunmuyor).
             notes = decoded
             save()
-            UserDefaults.standard.removeObject(forKey: legacyStorageKey)
         }
     }
 }
