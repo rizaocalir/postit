@@ -35,6 +35,9 @@ struct StickyNote: Identifiable, Codable, Hashable {
     var colorHex: String = "#FFF59D"
     var alarmDate: Date? = nil
     var createdAt: Date = Date()
+    var archivedAt: Date? = nil      // doluysa not arşivde
+
+    var isArchived: Bool { archivedAt != nil }
 
     var displayTitle: String {
         if !title.isEmpty { return title }
@@ -55,6 +58,7 @@ struct StickyNote: Identifiable, Codable, Hashable {
         colorHex = try c.decodeIfPresent(String.self, forKey: .colorHex) ?? "#FFF59D"
         alarmDate = try c.decodeIfPresent(Date.self, forKey: .alarmDate)
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        archivedAt = try c.decodeIfPresent(Date.self, forKey: .archivedAt)
     }
 }
 
@@ -125,7 +129,7 @@ final class NoteManager: NSObject, ObservableObject, UNUserNotificationCenterDel
         let identifier = notification.request.identifier
         DispatchQueue.main.async {
             guard let id = UUID(uuidString: identifier),
-                  let note = self.notes.first(where: { $0.id == id }) else { return }
+                  let note = self.notes.first(where: { $0.id == id }), !note.isArchived else { return }
             AlarmPanelManager.shared.show(note: note) { [weak self] in
                 self?.openNote(note)
             }
@@ -154,6 +158,14 @@ final class NoteManager: NSObject, ObservableObject, UNUserNotificationCenterDel
             .makeKeyAndOrderFront(nil)
     }
 
+    /// Panoda görünen (arşivlenmemiş) notlar
+    var activeNotes: [StickyNote] { notes.filter { !$0.isArchived } }
+
+    /// Arşivdekiler — en son arşivlenen en üstte
+    var archivedNotes: [StickyNote] {
+        notes.filter(\.isArchived).sorted { ($0.archivedAt ?? .distantPast) > ($1.archivedAt ?? .distantPast) }
+    }
+
     @discardableResult
     func addNote() -> StickyNote {
         let note = StickyNote()
@@ -164,6 +176,32 @@ final class NoteManager: NSObject, ObservableObject, UNUserNotificationCenterDel
     func deleteNote(id: UUID) {
         cancelAlarm(for: id)
         notes.removeAll { $0.id == id }
+    }
+
+    // MARK: Arşiv
+
+    /// Notu arşive taşır. Arşivdeki not çalmasın diye bekleyen alarmı iptal edilir
+    /// (alarm tarihi saklı kalır, arşivden çıkarılınca yeniden kurulur).
+    func archive(id: UUID) {
+        guard let i = notes.firstIndex(where: { $0.id == id }) else { return }
+        cancelAlarm(for: id)
+        withAnimation(.spring(duration: 0.3)) {
+            notes[i].archivedAt = Date()
+        }
+    }
+
+    func unarchive(id: UUID) {
+        guard let i = notes.firstIndex(where: { $0.id == id }) else { return }
+        withAnimation(.spring(duration: 0.3)) {
+            notes[i].archivedAt = nil
+        }
+        scheduleAlarm(for: notes[i])   // geçmiş tarihliyse kendiliğinden atlanır
+    }
+
+    func emptyArchive() {
+        let ids = archivedNotes.map(\.id)
+        ids.forEach { cancelAlarm(for: $0) }
+        withAnimation { notes.removeAll(where: \.isArchived) }
     }
 
     func move(from source: UUID, to destination: UUID) {
@@ -180,7 +218,7 @@ final class NoteManager: NSObject, ObservableObject, UNUserNotificationCenterDel
 
     func scheduleAlarm(for note: StickyNote) {
         cancelAlarm(for: note.id)
-        guard let date = note.alarmDate, date > Date() else { return }
+        guard !note.isArchived, let date = note.alarmDate, date > Date() else { return }
 
         let content = UNMutableNotificationContent()
         content.title = "📌 Post-it Hatırlatması"
@@ -716,6 +754,22 @@ struct EditNoteView: View {
                     .foregroundStyle(.red.opacity(0.8))
             }
             Spacer()
+
+            // İşi bitince: notu arşive gönderip editörü kapat
+            if note.isArchived {
+                Button("Arşivden Çıkar", systemImage: "tray.and.arrow.up") {
+                    manager.unarchive(id: note.id)
+                    dismiss()
+                }
+                .help("Notu tekrar panoya al")
+            } else {
+                Button("Arşive At", systemImage: "archivebox") {
+                    manager.archive(id: note.id)
+                    dismiss()
+                }
+                .help("İşi biten notu panodan kaldır, arşivde sakla")
+            }
+
             Button("Tamam") { dismiss() }
                 .buttonStyle(.borderedProminent)
                 .tint(.black.opacity(0.7))
@@ -763,7 +817,12 @@ struct NoteCardView: View {
                     .foregroundStyle(.blue.opacity(0.7))
             }
 
-            if let alarm = note.alarmDate {
+            if let archived = note.archivedAt {
+                Label("Arşiv · " + archived.formatted(date: .numeric, time: .omitted),
+                      systemImage: "archivebox.fill")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.black.opacity(0.45))
+            } else if let alarm = note.alarmDate {
                 Label(alarm.formatted(date: .numeric, time: .shortened), systemImage: "alarm.fill")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(.red.opacity(0.85))
@@ -774,8 +833,11 @@ struct NoteCardView: View {
         .background(
             RoundedRectangle(cornerRadius: 4)
                 .fill(Color(hex: note.colorHex))
-                .shadow(color: .black.opacity(0.25), radius: 5, x: 1, y: 3)
+                .shadow(color: .black.opacity(note.isArchived ? 0.12 : 0.25),
+                        radius: 5, x: 1, y: 3)
         )
+        .saturation(note.isArchived ? 0.35 : 1)      // arşivdekiler soluk görünsün
+        .opacity(note.isArchived ? 0.75 : 1)
         .rotationEffect(.degrees(Double(note.id.uuid.0 % 5) - 2.0)) // hafif, açılışlar arası sabit post-it eğimi
     }
 }
@@ -806,9 +868,16 @@ struct ContentView: View {
     @EnvironmentObject var manager: NoteManager
     @State private var selectedNote: StickyNote?
     @State private var draggingID: UUID?
+    @State private var showingArchive = false
+
+    private var visibleNotes: [StickyNote] {
+        showingArchive ? manager.archivedNotes : manager.activeNotes
+    }
 
     private func openPendingNote() {
         if let pending = manager.noteToEdit {
+            // Arşivdeki bir not açılıyorsa arşiv sekmesine geç
+            showingArchive = pending.isArchived
             selectedNote = pending
             manager.noteToEdit = nil
         }
@@ -821,30 +890,36 @@ struct ContentView: View {
                            startPoint: .top, endPoint: .bottom)
                 .ignoresSafeArea()
 
-            if manager.notes.isEmpty {
+            if visibleNotes.isEmpty {
                 VStack(spacing: 10) {
-                    Image(systemName: "note.text")
+                    Image(systemName: showingArchive ? "archivebox" : "note.text")
                         .font(.system(size: 44))
                         .foregroundStyle(.secondary)
-                    Text("Henüz not yok").font(.title3).foregroundStyle(.secondary)
-                    Text("Sağ üstteki kırmızı + ile ilk notunu ekle")
+                    Text(showingArchive ? "Arşiv boş" : "Henüz not yok")
+                        .font(.title3).foregroundStyle(.secondary)
+                    Text(showingArchive
+                         ? "İşi biten notları sağ tık → Arşive Taşı ile buraya gönder"
+                         : "Sağ üstteki kırmızı + ile ilk notunu ekle")
                         .font(.caption).foregroundStyle(.tertiary)
                 }
             } else {
                 ScrollView {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 20)], spacing: 24) {
-                        ForEach(manager.notes) { note in
+                        ForEach(visibleNotes) { note in
                             NoteCardView(note: note)
                                 .opacity(draggingID == note.id ? 0.4 : 1)
                                 .onTapGesture { selectedNote = note }
-                                .onDrag {
-                                    draggingID = note.id
-                                    return NSItemProvider(object: note.id.uuidString as NSString)
+                                .if(!showingArchive) { view in
+                                    view
+                                        .onDrag {
+                                            draggingID = note.id
+                                            return NSItemProvider(object: note.id.uuidString as NSString)
+                                        }
+                                        .onDrop(of: [UTType.text],
+                                                delegate: NoteDropDelegate(targetNote: note,
+                                                                           manager: manager,
+                                                                           draggingID: $draggingID))
                                 }
-                                .onDrop(of: [UTType.text],
-                                        delegate: NoteDropDelegate(targetNote: note,
-                                                                   manager: manager,
-                                                                   draggingID: $draggingID))
                                 .contextMenu {
                                     Menu("Rengi Değiştir") {
                                         ForEach(postItColors, id: \.hex) { c in
@@ -855,6 +930,16 @@ struct ContentView: View {
                                             }
                                         }
                                     }
+                                    if note.isArchived {
+                                        Button("Arşivden Çıkar", systemImage: "tray.and.arrow.up") {
+                                            manager.unarchive(id: note.id)
+                                        }
+                                    } else {
+                                        Button("Arşive Taşı", systemImage: "archivebox") {
+                                            manager.archive(id: note.id)
+                                        }
+                                    }
+                                    Divider()
                                     Button("Sil", role: .destructive) {
                                         manager.deleteNote(id: note.id)
                                     }
@@ -865,20 +950,36 @@ struct ContentView: View {
                 }
             }
         }
-        .navigationTitle("Post-it Notlarım")
+        .navigationTitle(showingArchive ? "Arşiv" : "Post-it Notlarım")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button(action: { selectedNote = manager.addNote() }) {
-                    ZStack {
-                        Circle().fill(Color.red).frame(width: 30, height: 30)
-                            .shadow(color: .red.opacity(0.4), radius: 3, y: 1)
-                        Image(systemName: "plus")
-                            .font(.system(size: 16, weight: .heavy))
-                            .foregroundStyle(.white)
-                    }
+                Picker("", selection: $showingArchive) {
+                    Label("Notlar", systemImage: "note.text").tag(false)
+                    Label("Arşiv (\(manager.archivedNotes.count))", systemImage: "archivebox").tag(true)
                 }
-                .buttonStyle(.plain)
-                .help("Yeni not ekle")
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+            }
+
+            ToolbarItem(placement: .primaryAction) {
+                if showingArchive {
+                    Button("Arşivi Boşalt", systemImage: "trash") { manager.emptyArchive() }
+                        .disabled(manager.archivedNotes.isEmpty)
+                        .help("Arşivdeki tüm notları kalıcı olarak sil")
+                } else {
+                    Button(action: { selectedNote = manager.addNote() }) {
+                        ZStack {
+                            Circle().fill(Color.red).frame(width: 30, height: 30)
+                                .shadow(color: .red.opacity(0.4), radius: 3, y: 1)
+                            Image(systemName: "plus")
+                                .font(.system(size: 16, weight: .heavy))
+                                .foregroundStyle(.white)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .help("Yeni not ekle")
+                }
             }
         }
         .sheet(item: $selectedNote) { note in
@@ -925,14 +1026,14 @@ struct MenuBarNotesView: View {
 
             Divider()
 
-            if manager.notes.isEmpty {
-                Text("Henüz not yok")
+            if manager.activeNotes.isEmpty {
+                Text(manager.archivedNotes.isEmpty ? "Henüz not yok" : "Panoda not yok — hepsi arşivde")
                     .foregroundStyle(.secondary)
                     .padding(.vertical, 24)
             } else {
                 ScrollView {
                     VStack(spacing: 2) {
-                        ForEach(manager.notes) { note in
+                        ForEach(manager.activeNotes) { note in
                             Button(action: { openEditor(for: note) }) {
                                 HStack(spacing: 10) {
                                     RoundedRectangle(cornerRadius: 3)
@@ -963,6 +1064,14 @@ struct MenuBarNotesView: View {
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
+                            .contextMenu {
+                                Button("Arşive Taşı", systemImage: "archivebox") {
+                                    manager.archive(id: note.id)
+                                }
+                                Button("Sil", role: .destructive) {
+                                    manager.deleteNote(id: note.id)
+                                }
+                            }
                         }
                     }
                     .padding(.vertical, 4)
@@ -987,6 +1096,14 @@ struct MenuBarNotesView: View {
 }
 
 // MARK: - 8. Yardımcılar
+
+extension View {
+    /// Koşul sağlanıyorsa verilen değişiklikleri uygular (ör. yalnızca panoda sürükle-bırak)
+    @ViewBuilder
+    func `if`<Content: View>(_ condition: Bool, transform: (Self) -> Content) -> some View {
+        if condition { transform(self) } else { self }
+    }
+}
 
 extension Color {
     init(hex: String) {

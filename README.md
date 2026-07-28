@@ -8,7 +8,8 @@ macOS için menü çubuğunda yaşayan, çeviri destekli yapışkan not (post-it
 - **Listeler** — madde işareti (•) ve otomatik artan numaralandırma (1. 2. 3.); Enter ile liste kendiliğinden devam eder, boş maddede Enter listeyi bitirir
 - **Anında İngilizce çeviri** — notun sonuna çizgi (`———` veya `---`) çekildiğinde üstteki metnin İngilizce çevirisi altta belirir (Apple Translation framework, cihaz üzerinde çalışır)
 - **Alarm** — tarih/saat seç; alarm çaldığında **"Kapat" diyene kadar ekranda kalan** yüzen bir hatırlatma paneli açılır (uygulama kapalıyken de kalıcı "Alert" stili sistem bildirimi gelir)
-- **Menü çubuğu erişimi** — tüm notlara sağ üstteki menü çubuğu simgesinden hızlıca ulaş
+- **Arşiv** — işi biten notu silmeden panodan kaldır; toolbar'daki **Notlar / Arşiv** anahtarıyla arşive geç, istediğinde notu geri al. Arşivlenen notun alarmı susar, geri alınınca yeniden kurulur
+- **Menü çubuğu erişimi** — aktif notlara sağ üstteki menü çubuğu simgesinden hızlıca ulaş
 - **Sürükle-bırak** — pano görünümünde notları sürükleyerek yeniden sırala
 - **6 post-it rengi** — editörden veya sağ tık menüsünden değiştirilebilir
 - **Kalıcı depolama** — notlar Application Support altında JSON dosyasına debounce'lu olarak otomatik kaydedilir; eski sürümün UserDefaults kayıtları ilk açılışta taşınır
@@ -39,6 +40,9 @@ Xcode'da `PostIt` şemasını seçip **⌘R** ile çalıştırın.
 | Çeviri | Toolbar'daki **—** butonu veya elle `———` çizgisi çek |
 | Alarm | Toolbar'daki 🔔 zil simgesi |
 | Renk değiştir | Editör toolbar'ındaki renk daireleri veya karta sağ tık |
+| Arşive at | Editörde **Arşive At**, ya da karta / menü çubuğu satırına sağ tık → **Arşive Taşı** |
+| Arşivi görüntüle | Toolbar'daki **Arşiv** sekmesi |
+| Arşivden çıkar | Arşiv sekmesinde karta sağ tık → **Arşivden Çıkar** |
 | Sil | Karta sağ tık → Sil |
 
 ## Mimari
