@@ -6,5 +6,9 @@
 	     kullanıcı kapatana kadar ekranda kalan "Alert" stilinde görünsün -->
 	<key>NSUserNotificationAlertStyle</key>
 	<string>alert</string>
+
+	<!-- "PostIt Hakkında" panelinde görünen telif satırı -->
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright GRCTek 2026</string>
 </dict>
 </plist>

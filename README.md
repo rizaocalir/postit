@@ -14,6 +14,13 @@ macOS için menü çubuğunda yaşayan, çeviri destekli yapışkan not (post-it
 - **6 post-it rengi** — editörden veya sağ tık menüsünden değiştirilebilir
 - **Kalıcı depolama** — notlar Application Support altında JSON dosyasına debounce'lu olarak otomatik kaydedilir; eski sürümün UserDefaults kayıtları ilk açılışta taşınır
 
+## İndir
+
+Hazır uygulamayı [Releases](https://github.com/rizaocalir/postit/releases/latest) sayfasından indirebilirsiniz.
+
+Uygulama Apple Developer ID ile imzalanmadığı için ilk açılışta macOS uyarı verir. Açmak için:
+`PostIt.app`'e **sağ tık → Aç** deyin, çıkan uyarıda tekrar **Aç**'ı seçin (yalnızca ilk seferde gerekir).
+
 ## Gereksinimler
 
 - macOS 15 (Sequoia) veya üzeri — Apple Translation framework için gerekli
